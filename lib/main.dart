@@ -1,6 +1,9 @@
-import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+
 void main() => runApp(const DailyHabitApp());
+
+const _alarmChannel = MethodChannel('com.example.daily_habit/alarms');
 
 class HabitItem {
   HabitItem({
@@ -9,6 +12,7 @@ class HabitItem {
     required this.color,
     required this.time,
     this.icon,
+    this.reminderDate,
     this.isHabit = false,
     this.done = false,
   });
@@ -17,8 +21,10 @@ class HabitItem {
   Color color;
   TimeOfDay? time;
   IconData? icon;
+  DateTime? reminderDate;
   bool isHabit;
   bool done;
+  final int id = DateTime.now().microsecondsSinceEpoch;
 }
 
 const _ink = Color(0xFF202B2A);
@@ -107,6 +113,11 @@ class _TrackerHomeState extends State<TrackerHome> {
     Icons.spa_rounded,
   ];
   DateTime selectedDate = DateTime.now();
+  DateTime calendarMonth = DateTime(
+    DateTime.now().year == 2026 ? DateTime.now().year : 2026,
+    DateTime.now().year == 2026 ? DateTime.now().month : 1,
+  );
+  final ScrollController _homeScrollController = ScrollController();
   final Set<int> completedDays = {DateTime.now().day};
   final List<HabitItem> items = [
     HabitItem(
@@ -132,14 +143,12 @@ class _TrackerHomeState extends State<TrackerHome> {
       isHabit: true,
     ),
   ];
-  final Map<int, Timer> reminders = {};
   int get done => items.where((e) => e.done).length;
   int get percent => items.isEmpty ? 0 : (done / items.length * 100).round();
+
   @override
   void dispose() {
-    for (final timer in reminders.values) {
-      timer.cancel();
-    }
+    _homeScrollController.dispose();
     super.dispose();
   }
 
@@ -231,6 +240,8 @@ class _TrackerHomeState extends State<TrackerHome> {
   }
 
   Widget _home() => ListView(
+    key: const PageStorageKey<String>('home-scroll'),
+    controller: _homeScrollController,
     padding: const EdgeInsets.fromLTRB(20, 12, 20, 110),
     children: [
       Text(
@@ -374,10 +385,11 @@ class _TrackerHomeState extends State<TrackerHome> {
   );
 
   Widget _calendarCard() {
-    final now = DateTime.now();
-    final firstDay = DateTime(now.year, now.month, 1);
-    final numberOfDays = DateTime(now.year, now.month + 1, 0).day;
+    final month = calendarMonth;
+    final firstDay = DateTime(month.year, month.month, 1);
+    final numberOfDays = DateTime(month.year, month.month + 1, 0).day;
     final weeks = (firstDay.weekday - 1 + numberOfDays + 6) ~/ 7;
+    final today = DateTime.now();
     return Container(
       padding: const EdgeInsets.all(17),
       decoration: _surface(),
@@ -387,12 +399,36 @@ class _TrackerHomeState extends State<TrackerHome> {
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Text(
-                '${_month(now.month)} ${now.year}',
-                style: const TextStyle(
-                  fontWeight: FontWeight.w800,
-                  fontSize: 16,
-                ),
+              Row(
+                children: [
+                  IconButton(
+                    visualDensity: VisualDensity.compact,
+                    onPressed: month.month == 1
+                        ? null
+                        : () => setState(
+                            () =>
+                                calendarMonth = DateTime(2026, month.month - 1),
+                          ),
+                    icon: const Icon(Icons.chevron_left_rounded),
+                  ),
+                  Text(
+                    '${_month(month.month)} 2026',
+                    style: const TextStyle(
+                      fontWeight: FontWeight.w800,
+                      fontSize: 16,
+                    ),
+                  ),
+                  IconButton(
+                    visualDensity: VisualDensity.compact,
+                    onPressed: month.month == 12
+                        ? null
+                        : () => setState(
+                            () =>
+                                calendarMonth = DateTime(2026, month.month + 1),
+                          ),
+                    icon: const Icon(Icons.chevron_right_rounded),
+                  ),
+                ],
               ),
               Row(
                 children: [
@@ -444,7 +480,10 @@ class _TrackerHomeState extends State<TrackerHome> {
                       child: _calendarDay(
                         week * 7 + weekday - firstDay.weekday + 2,
                         numberOfDays,
-                        now.day,
+                        today.year == 2026 && today.month == month.month
+                            ? today.day
+                            : -1,
+                        month.month,
                       ),
                     ),
                 ],
@@ -455,46 +494,56 @@ class _TrackerHomeState extends State<TrackerHome> {
     );
   }
 
-  Widget _calendarDay(int day, int numberOfDays, int today) {
+  Widget _calendarDay(int day, int numberOfDays, int today, int month) {
     if (day < 1 || day > numberOfDays) return const SizedBox(height: 34);
     final isToday = day == today;
     final isComplete = completedDays.contains(day);
+    final isSelected =
+        selectedDate.year == 2026 &&
+        selectedDate.month == month &&
+        selectedDate.day == day;
     return Center(
-      child: Container(
-        width: 31,
-        height: 31,
-        decoration: BoxDecoration(
-          color: isToday
-              ? _green
-              : isComplete
-              ? _mint
-              : Colors.transparent,
-          shape: BoxShape.circle,
-        ),
-        child: Stack(
-          alignment: Alignment.center,
-          children: [
-            Text(
-              '$day',
-              style: TextStyle(
-                color: isToday ? Colors.white : null,
-                fontSize: 12,
-                fontWeight: isToday ? FontWeight.w800 : FontWeight.w500,
-              ),
-            ),
-            if (isComplete && !isToday)
-              Positioned(
-                bottom: 2,
-                child: Container(
-                  width: 3,
-                  height: 3,
-                  decoration: const BoxDecoration(
-                    color: _green,
-                    shape: BoxShape.circle,
-                  ),
+      child: InkWell(
+        customBorder: const CircleBorder(),
+        onTap: () => setState(() => selectedDate = DateTime(2026, month, day)),
+        child: Container(
+          width: 31,
+          height: 31,
+          decoration: BoxDecoration(
+            color: isSelected || isToday
+                ? _green
+                : isComplete
+                ? _mint
+                : Colors.transparent,
+            shape: BoxShape.circle,
+          ),
+          child: Stack(
+            alignment: Alignment.center,
+            children: [
+              Text(
+                '$day',
+                style: TextStyle(
+                  color: isSelected || isToday ? Colors.white : null,
+                  fontSize: 12,
+                  fontWeight: isSelected || isToday
+                      ? FontWeight.w800
+                      : FontWeight.w500,
                 ),
               ),
-          ],
+              if (isComplete && !isToday)
+                Positioned(
+                  bottom: 2,
+                  child: Container(
+                    width: 3,
+                    height: 3,
+                    decoration: const BoxDecoration(
+                      color: _green,
+                      shape: BoxShape.circle,
+                    ),
+                  ),
+                ),
+            ],
+          ),
         ),
       ),
     );
@@ -728,6 +777,16 @@ class _TrackerHomeState extends State<TrackerHome> {
                         color: Theme.of(context).colorScheme.onSurfaceVariant,
                       ),
                     ),
+                    if (item.reminderDate != null) ...[
+                      const SizedBox(width: 5),
+                      Text(
+                        '${item.reminderDate!.month}/${item.reminderDate!.day}',
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: Theme.of(context).colorScheme.onSurfaceVariant,
+                        ),
+                      ),
+                    ],
                   ],
                 ],
               ),
@@ -1219,6 +1278,7 @@ class _TrackerHomeState extends State<TrackerHome> {
     var category = item?.category ?? 'Wellness';
     var habit = item?.isHabit ?? true;
     var time = item?.time;
+    var reminderDate = item?.reminderDate ?? selectedDate;
     var selectedColor = item?.color ?? _pastelColors.first;
     var selectedIcon = item?.icon ?? _categoryIcon(category);
     var titleError = false;
@@ -1396,13 +1456,55 @@ class _TrackerHomeState extends State<TrackerHome> {
                 ),
                 ListTile(
                   contentPadding: EdgeInsets.zero,
+                  leading: const Icon(
+                    Icons.calendar_month_rounded,
+                    color: _green,
+                  ),
+                  title: const Text('Reminder date'),
+                  subtitle: Text(
+                    '${_month(reminderDate.month)} ${reminderDate.day}, ${reminderDate.year}',
+                  ),
+                  trailing: const Icon(Icons.edit_calendar_rounded),
+                  onTap: () async {
+                    final today = DateTime.now();
+                    final minimum = today.year == 2026
+                        ? DateTime(today.year, today.month, today.day)
+                        : DateTime(2026, 1, 1);
+                    final maximum = DateTime(2026, 12, 31);
+                    final initial = reminderDate.isBefore(minimum)
+                        ? minimum
+                        : reminderDate.isAfter(maximum)
+                        ? maximum
+                        : reminderDate;
+                    final selected = await showDatePicker(
+                      context: sheetContext,
+                      initialDate: initial,
+                      firstDate: minimum,
+                      lastDate: maximum,
+                      helpText: 'Choose a reminder date in 2026',
+                    );
+                    if (selected != null) {
+                      setSheet(
+                        () => reminderDate = DateTime(
+                          selected.year,
+                          selected.month,
+                          selected.day,
+                        ),
+                      );
+                    }
+                  },
+                ),
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
                   leading: const Icon(Icons.alarm_rounded, color: _green),
                   title: Text(
                     time == null
                         ? 'Add a reminder'
                         : 'Reminder at ${time!.format(sheetContext)}',
                   ),
-                  subtitle: const Text('Reminder appears when the app is open'),
+                  subtitle: Text(
+                    'Rings on ${_month(reminderDate.month)} ${reminderDate.day}',
+                  ),
                   trailing: IconButton(
                     icon: const Icon(Icons.schedule_rounded),
                     onPressed: () async {
@@ -1422,51 +1524,79 @@ class _TrackerHomeState extends State<TrackerHome> {
                   },
                 ),
                 const SizedBox(height: 10),
-                SizedBox(
-                  width: double.infinity,
-                  height: 52,
-                  child: FilledButton(
-                    style: FilledButton.styleFrom(
-                      backgroundColor: _green,
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(15),
+                Row(
+                  children: [
+                    if (item != null) ...[
+                      Expanded(
+                        child: SizedBox(
+                          height: 52,
+                          child: OutlinedButton(
+                            onPressed: () => Navigator.pop(sheetContext),
+                            style: OutlinedButton.styleFrom(
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(15),
+                              ),
+                            ),
+                            child: const Text('Cancel edit'),
+                          ),
+                        ),
                       ),
-                    ),
-                    onPressed: () {
-                      if (title.text.trim().isEmpty) {
-                        setSheet(() => titleError = true);
-                        return;
-                      }
-                      if (item == null) {
-                        setState(
-                          () => items.add(
-                            HabitItem(
-                              title: title.text.trim(),
-                              category: category,
-                              color: selectedColor,
-                              icon: selectedIcon,
-                              time: time,
-                              isHabit: habit,
+                      const SizedBox(width: 10),
+                    ],
+                    Expanded(
+                      child: SizedBox(
+                        height: 52,
+                        child: FilledButton(
+                          style: FilledButton.styleFrom(
+                            backgroundColor: _green,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(15),
                             ),
                           ),
-                        );
-                      } else {
-                        setState(() {
-                          item.title = title.text.trim();
-                          item.category = category;
-                          item.color = selectedColor;
-                          item.icon = selectedIcon;
-                          item.time = time;
-                          item.isHabit = habit;
-                        });
-                      }
-                      Navigator.pop(sheetContext, true);
-                    },
-                    child: Text(
-                      item == null ? 'Add to my routine' : 'Save changes',
-                      style: const TextStyle(fontWeight: FontWeight.w800),
+                          onPressed: () {
+                            if (title.text.trim().isEmpty) {
+                              setSheet(() => titleError = true);
+                              return;
+                            }
+                            if (item == null) {
+                              setState(
+                                () => items.add(
+                                  HabitItem(
+                                    title: title.text.trim(),
+                                    category: category,
+                                    color: selectedColor,
+                                    icon: selectedIcon,
+                                    time: time,
+                                    reminderDate: time == null
+                                        ? null
+                                        : reminderDate,
+                                    isHabit: habit,
+                                  ),
+                                ),
+                              );
+                            } else {
+                              setState(() {
+                                item.title = title.text.trim();
+                                item.category = category;
+                                item.color = selectedColor;
+                                item.icon = selectedIcon;
+                                item.time = time;
+                                item.reminderDate = time == null
+                                    ? null
+                                    : reminderDate;
+                                item.isHabit = habit;
+                              });
+                            }
+                            Navigator.pop(sheetContext, true);
+                          },
+                          child: Text(
+                            item == null ? 'Add to my routine' : 'Save changes',
+                            style: const TextStyle(fontWeight: FontWeight.w800),
+                          ),
+                        ),
+                      ),
                     ),
-                  ),
+                  ],
                 ),
               ],
             ),
@@ -1474,40 +1604,80 @@ class _TrackerHomeState extends State<TrackerHome> {
         ),
       ),
     );
-    if (result == true && time != null && item == null) {
-      _scheduleReminder(title.text.trim(), time!);
+    if (result == true && item != null) {
+      await _cancelReminder(item.id);
+      if (time != null) {
+        await _scheduleReminder(
+          item,
+          title.text.trim(),
+          time!,
+          reminderDate,
+          habit,
+        );
+      }
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('Successfully edit')));
+      }
+    } else if (result == true && item == null && time != null) {
+      final added = items.last;
+      await _scheduleReminder(
+        added,
+        title.text.trim(),
+        time!,
+        reminderDate,
+        habit,
+      );
     }
     title.dispose();
   }
 
-  void _scheduleReminder(String title, TimeOfDay time) {
-    final now = DateTime.now();
-    var target = DateTime(now.year, now.month, now.day, time.hour, time.minute);
-    if (!target.isAfter(now)) target = target.add(const Duration(days: 1));
-    final duration = target.difference(now);
-    final id = items.length - 1;
-    reminders[id]?.cancel();
-    reminders[id] = Timer(duration, () {
-      if (!mounted) return;
-      showDialog<void>(
-        context: context,
-        builder: (ctx) => AlertDialog(
-          icon: const Icon(
-            Icons.notifications_active_rounded,
-            color: _green,
-            size: 34,
-          ),
-          title: const Text('A gentle reminder'),
-          content: Text('$userName, you need to check your tasks: $title.'),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(ctx),
-              child: const Text('Got it'),
+  Future<void> _scheduleReminder(
+    HabitItem item,
+    String title,
+    TimeOfDay time,
+    DateTime date,
+    bool repeatDaily,
+  ) async {
+    try {
+      await _alarmChannel.invokeMethod<void>('schedule', {
+        'id': item.id.toString(),
+        'title': title,
+        'hour': time.hour,
+        'minute': time.minute,
+        'year': date.year,
+        'month': date.month,
+        'day': date.day,
+        'repeatDaily': repeatDaily,
+      });
+    } on PlatformException catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not set reminder: ${error.message}')),
+        );
+      }
+    } on MissingPluginException {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Alarms are available in the Android app, not in the web version.',
             ),
-          ],
-        ),
-      );
-    });
+          ),
+        );
+      }
+    }
+  }
+
+  Future<void> _cancelReminder(int id) async {
+    try {
+      await _alarmChannel.invokeMethod<void>('cancel', {'id': id.toString()});
+    } on PlatformException {
+      // On platforms without native alarm support there is nothing to cancel.
+    } on MissingPluginException {
+      // Web does not have the Android alarm channel.
+    }
   }
 
   Future<void> _deleteItem(HabitItem item) async {
@@ -1519,7 +1689,7 @@ class _TrackerHomeState extends State<TrackerHome> {
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('Keep it'),
+            child: const Text('Cancel'),
           ),
           FilledButton(
             onPressed: () => Navigator.pop(ctx, true),
@@ -1528,6 +1698,14 @@ class _TrackerHomeState extends State<TrackerHome> {
         ],
       ),
     );
-    if (ok == true) setState(() => items.remove(item));
+    if (ok == true) {
+      await _cancelReminder(item.id);
+      setState(() => items.remove(item));
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('Task Deleted')));
+      }
+    }
   }
 }
