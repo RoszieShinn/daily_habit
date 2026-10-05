@@ -8,7 +8,7 @@ const _alarmChannel = MethodChannel('com.example.daily_habit/alarms');
 class HabitItem {
   HabitItem({
     required this.title,
-    required this.category,
+    this.description = '',
     required this.color,
     required this.time,
     this.icon,
@@ -17,7 +17,7 @@ class HabitItem {
     this.done = false,
   });
   String title;
-  String category;
+  String description;
   Color color;
   TimeOfDay? time;
   IconData? icon;
@@ -38,12 +38,12 @@ class DailyHabitApp extends StatefulWidget {
 }
 
 class _DailyHabitAppState extends State<DailyHabitApp> {
-  bool dark = false;
+  ThemeMode themeMode = ThemeMode.system;
   @override
   Widget build(BuildContext context) => MaterialApp(
     debugShowCheckedModeBanner: false,
     title: 'Day by Day',
-    themeMode: dark ? ThemeMode.dark : ThemeMode.light,
+    themeMode: themeMode,
     theme: ThemeData(
       useMaterial3: true,
       colorScheme: ColorScheme.fromSeed(
@@ -65,14 +65,17 @@ class _DailyHabitAppState extends State<DailyHabitApp> {
         brightness: Brightness.dark,
       ),
     ),
-    home: TrackerHome(dark: dark, onTheme: () => setState(() => dark = !dark)),
+    home: TrackerHome(
+      themeMode: themeMode,
+      onTheme: (value) => setState(() => themeMode = value),
+    ),
   );
 }
 
 class TrackerHome extends StatefulWidget {
-  const TrackerHome({super.key, required this.dark, required this.onTheme});
-  final bool dark;
-  final VoidCallback onTheme;
+  const TrackerHome({super.key, required this.themeMode, required this.onTheme});
+  final ThemeMode themeMode;
+  final ValueChanged<ThemeMode> onTheme;
   @override
   State<TrackerHome> createState() => _TrackerHomeState();
 }
@@ -118,11 +121,9 @@ class _TrackerHomeState extends State<TrackerHome> {
     DateTime.now().year == 2026 ? DateTime.now().month : 1,
   );
   final ScrollController _homeScrollController = ScrollController();
-  final Set<int> completedDays = {DateTime.now().day};
   final List<HabitItem> items = [
     HabitItem(
       title: 'Morning stretch',
-      category: 'Wellness',
       color: const Color(0xFFE9B892),
       time: const TimeOfDay(hour: 7, minute: 30),
       isHabit: true,
@@ -130,14 +131,12 @@ class _TrackerHomeState extends State<TrackerHome> {
     ),
     HabitItem(
       title: 'Read 10 pages',
-      category: 'Learning',
       color: const Color(0xFF9DBBC6),
       time: const TimeOfDay(hour: 12, minute: 0),
       isHabit: true,
     ),
     HabitItem(
       title: 'Take a mindful walk',
-      category: 'Wellness',
       color: const Color(0xFFB4C79C),
       time: const TimeOfDay(hour: 17, minute: 0),
       isHabit: true,
@@ -188,10 +187,18 @@ class _TrackerHomeState extends State<TrackerHome> {
         ),
         actions: [
           IconButton(
-            tooltip: widget.dark ? 'Light mode' : 'Dark mode',
-            onPressed: widget.onTheme,
+            tooltip: Theme.of(context).brightness == Brightness.dark
+                ? 'Light mode'
+                : 'Dark mode',
+            onPressed: () => widget.onTheme(
+              Theme.of(context).brightness == Brightness.dark
+                  ? ThemeMode.light
+                  : ThemeMode.dark,
+            ),
             icon: Icon(
-              widget.dark ? Icons.light_mode_rounded : Icons.dark_mode_rounded,
+              Theme.of(context).brightness == Brightness.dark
+                  ? Icons.light_mode_rounded
+                  : Icons.dark_mode_rounded,
             ),
           ),
           const SizedBox(width: 8),
@@ -269,9 +276,11 @@ class _TrackerHomeState extends State<TrackerHome> {
       Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          const Text(
-            "Today's Routine",
-            style: TextStyle(fontSize: 19, fontWeight: FontWeight.w800),
+          Text(
+            _isSameDate(selectedDate, DateTime.now())
+                ? "Today's Routine"
+                : '${_month(selectedDate.month)} ${selectedDate.day} Routine',
+            style: const TextStyle(fontSize: 19, fontWeight: FontWeight.w800),
           ),
           TextButton(
             onPressed: () => setState(() => tab = 1),
@@ -279,10 +288,10 @@ class _TrackerHomeState extends State<TrackerHome> {
           ),
         ],
       ),
-      if (items.isEmpty)
+      if (_itemsForDate(selectedDate).isEmpty)
         _emptyState()
       else
-        ...items.take(3).map((item) => _itemCard(item)),
+        ..._itemsForDate(selectedDate).map((item) => _itemCard(item)),
       const SizedBox(height: 12),
       _quoteCard(),
     ],
@@ -497,7 +506,7 @@ class _TrackerHomeState extends State<TrackerHome> {
   Widget _calendarDay(int day, int numberOfDays, int today, int month) {
     if (day < 1 || day > numberOfDays) return const SizedBox(height: 34);
     final isToday = day == today;
-    final isComplete = completedDays.contains(day);
+    final hasTasks = _itemsForDate(DateTime(2026, month, day)).isNotEmpty;
     final isSelected =
         selectedDate.year == 2026 &&
         selectedDate.month == month &&
@@ -512,7 +521,7 @@ class _TrackerHomeState extends State<TrackerHome> {
           decoration: BoxDecoration(
             color: isSelected || isToday
                 ? _green
-                : isComplete
+                : hasTasks
                 ? _mint
                 : Colors.transparent,
             shape: BoxShape.circle,
@@ -530,7 +539,7 @@ class _TrackerHomeState extends State<TrackerHome> {
                       : FontWeight.w500,
                 ),
               ),
-              if (isComplete && !isToday)
+              if (hasTasks && !isToday && !isSelected)
                 Positioned(
                   bottom: 2,
                   child: Container(
@@ -563,6 +572,24 @@ class _TrackerHomeState extends State<TrackerHome> {
     'November',
     'December',
   ][m - 1];
+  bool _isSameDate(DateTime first, DateTime second) =>
+      first.year == second.year &&
+      first.month == second.month &&
+      first.day == second.day;
+
+  List<HabitItem> _itemsForDate(DateTime date) => items.where((item) {
+    final reminderDate = item.reminderDate;
+    if (reminderDate == null) return _isSameDate(date, DateTime.now());
+    if (_isSameDate(date, reminderDate)) return true;
+    return item.isHabit && date.isAfter(reminderDate);
+  }).toList()..sort((first, second) {
+    if (first.time == null) return second.time == null ? 0 : 1;
+    if (second.time == null) return -1;
+    final firstMinutes = first.time!.hour * 60 + first.time!.minute;
+    final secondMinutes = second.time!.hour * 60 + second.time!.minute;
+    return firstMinutes.compareTo(secondMinutes);
+  });
+
   int _streak() => done > 0 ? (done + 2).clamp(1, 12).toInt() : 0;
   Widget _quoteCard() => Container(
     padding: const EdgeInsets.all(18),
@@ -673,15 +700,6 @@ class _TrackerHomeState extends State<TrackerHome> {
     'Sunday',
   ][d - 1];
 
-  IconData _categoryIcon(String category) => switch (category) {
-    'Fitness' => Icons.fitness_center_rounded,
-    'Learning' => Icons.auto_stories_rounded,
-    'Mindfulness' => Icons.self_improvement_rounded,
-    'Productivity' => Icons.bolt_rounded,
-    'Personal' => Icons.favorite_rounded,
-    _ => Icons.spa_rounded,
-  };
-
   Widget _itemCard(HabitItem item) => Container(
     margin: const EdgeInsets.only(bottom: 10),
     padding: const EdgeInsets.all(14),
@@ -691,11 +709,6 @@ class _TrackerHomeState extends State<TrackerHome> {
         InkWell(
           onTap: () => setState(() {
             item.done = !item.done;
-            if (item.done) {
-              completedDays.add(DateTime.now().day);
-            } else if (items.every((entry) => !entry.done)) {
-              completedDays.remove(DateTime.now().day);
-            }
           }),
           borderRadius: BorderRadius.circular(20),
           child: Container(
@@ -723,7 +736,7 @@ class _TrackerHomeState extends State<TrackerHome> {
             borderRadius: BorderRadius.circular(14),
           ),
           child: Icon(
-            item.icon ?? _categoryIcon(item.category),
+            item.icon ?? Icons.spa_rounded,
             color: _green,
             size: 21,
           ),
@@ -755,13 +768,18 @@ class _TrackerHomeState extends State<TrackerHome> {
                     color: Theme.of(context).colorScheme.onSurfaceVariant,
                   ),
                   const SizedBox(width: 4),
-                  Text(
-                    item.category,
-                    style: TextStyle(
-                      fontSize: 11,
-                      color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  if (item.description.isNotEmpty)
+                    Expanded(
+                      child: Text(
+                        item.description,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: Theme.of(context).colorScheme.onSurfaceVariant,
+                        ),
+                      ),
                     ),
-                  ),
                   if (item.time != null) ...[
                     const SizedBox(width: 9),
                     Icon(
@@ -1233,13 +1251,20 @@ class _TrackerHomeState extends State<TrackerHome> {
             },
           ),
           ListTile(
-            leading: Icon(
-              widget.dark
-                  ? Icons.light_mode_outlined
-                  : Icons.dark_mode_outlined,
+            leading: const Icon(Icons.brightness_6_outlined),
+            title: const Text('Appearance'),
+            subtitle: Text(_themeModeName(widget.themeMode)),
+            trailing: PopupMenuButton<ThemeMode>(
+              tooltip: 'Choose appearance',
+              initialValue: widget.themeMode,
+              onSelected: widget.onTheme,
+              itemBuilder: (context) => [
+                _themeModeMenuItem(ThemeMode.system, 'System'),
+                _themeModeMenuItem(ThemeMode.light, 'Light'),
+                _themeModeMenuItem(ThemeMode.dark, 'Dark'),
+              ],
             ),
-            title: Text(widget.dark ? 'Light appearance' : 'Dark appearance'),
-            onTap: widget.onTheme,
+            onTap: () => widget.onTheme(ThemeMode.system),
           ),
           const Spacer(),
           const Padding(
@@ -1258,6 +1283,30 @@ class _TrackerHomeState extends State<TrackerHome> {
       ),
     ),
   );
+
+  String _themeModeName(ThemeMode mode) => switch (mode) {
+    ThemeMode.system => 'System',
+    ThemeMode.light => 'Light',
+    ThemeMode.dark => 'Dark',
+  };
+
+  PopupMenuItem<ThemeMode> _themeModeMenuItem(ThemeMode mode, String label) =>
+      PopupMenuItem<ThemeMode>(
+        value: mode,
+        child: Row(
+          children: [
+            Icon(
+              widget.themeMode == mode
+                  ? Icons.radio_button_checked
+                  : Icons.radio_button_unchecked,
+              size: 18,
+            ),
+            const SizedBox(width: 10),
+            Text(label),
+          ],
+        ),
+      );
+
   Widget _drawerItem(IconData icon, String title, int index) => ListTile(
     leading: Icon(icon, color: tab == index ? _green : null),
     title: Text(
@@ -1275,12 +1324,12 @@ class _TrackerHomeState extends State<TrackerHome> {
 
   Future<void> _editItem([HabitItem? item]) async {
     final title = TextEditingController(text: item?.title ?? '');
-    var category = item?.category ?? 'Wellness';
+    final description = TextEditingController(text: item?.description ?? '');
     var habit = item?.isHabit ?? true;
     var time = item?.time;
     var reminderDate = item?.reminderDate ?? selectedDate;
     var selectedColor = item?.color ?? _pastelColors.first;
-    var selectedIcon = item?.icon ?? _categoryIcon(category);
+    var selectedIcon = item?.icon ?? Icons.spa_rounded;
     var titleError = false;
 
     final result = await showModalBottomSheet<bool>(
@@ -1344,33 +1393,20 @@ class _TrackerHomeState extends State<TrackerHome> {
                   ),
                 ),
                 const SizedBox(height: 8),
-                DropdownButtonFormField<String>(
-                  value: category,
+                TextField(
+                  controller: description,
+                  maxLength: 120,
+                  minLines: 2,
+                  maxLines: 3,
                   decoration: InputDecoration(
-                    labelText: 'Category',
-                    prefixIcon: const Icon(Icons.category_outlined),
+                    labelText: 'Description',
+                    hintText: 'Add a note or reminder message',
+                    alignLabelWithHint: true,
+                    prefixIcon: const Icon(Icons.notes_rounded),
                     border: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(15),
                     ),
                   ),
-                  items:
-                      const [
-                            'Wellness',
-                            'Learning',
-                            'Fitness',
-                            'Mindfulness',
-                            'Productivity',
-                            'Personal',
-                          ]
-                          .map(
-                            (value) => DropdownMenuItem(
-                              value: value,
-                              child: Text(value),
-                            ),
-                          )
-                          .toList(),
-                  onChanged: (value) =>
-                      setSheet(() => category = value ?? category),
                 ),
                 const SizedBox(height: 14),
                 const Text(
@@ -1563,13 +1599,11 @@ class _TrackerHomeState extends State<TrackerHome> {
                                 () => items.add(
                                   HabitItem(
                                     title: title.text.trim(),
-                                    category: category,
+                                    description: description.text.trim(),
                                     color: selectedColor,
                                     icon: selectedIcon,
                                     time: time,
-                                    reminderDate: time == null
-                                        ? null
-                                        : reminderDate,
+                                    reminderDate: reminderDate,
                                     isHabit: habit,
                                   ),
                                 ),
@@ -1577,13 +1611,11 @@ class _TrackerHomeState extends State<TrackerHome> {
                             } else {
                               setState(() {
                                 item.title = title.text.trim();
-                                item.category = category;
+                                item.description = description.text.trim();
                                 item.color = selectedColor;
                                 item.icon = selectedIcon;
                                 item.time = time;
-                                item.reminderDate = time == null
-                                    ? null
-                                    : reminderDate;
+                                item.reminderDate = reminderDate;
                                 item.isHabit = habit;
                               });
                             }
@@ -1610,6 +1642,7 @@ class _TrackerHomeState extends State<TrackerHome> {
         await _scheduleReminder(
           item,
           title.text.trim(),
+          description.text.trim(),
           time!,
           reminderDate,
           habit,
@@ -1620,22 +1653,32 @@ class _TrackerHomeState extends State<TrackerHome> {
           context,
         ).showSnackBar(const SnackBar(content: Text('Successfully edit')));
       }
-    } else if (result == true && item == null && time != null) {
+    } else if (result == true && item == null) {
       final added = items.last;
-      await _scheduleReminder(
-        added,
-        title.text.trim(),
-        time!,
-        reminderDate,
-        habit,
-      );
+      if (time != null) {
+        await _scheduleReminder(
+          added,
+          title.text.trim(),
+          description.text.trim(),
+          time!,
+          reminderDate,
+          habit,
+        );
+      }
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('Task Added')));
+      }
     }
     title.dispose();
+    description.dispose();
   }
 
   Future<void> _scheduleReminder(
     HabitItem item,
     String title,
+    String description,
     TimeOfDay time,
     DateTime date,
     bool repeatDaily,
@@ -1644,6 +1687,8 @@ class _TrackerHomeState extends State<TrackerHome> {
       await _alarmChannel.invokeMethod<void>('schedule', {
         'id': item.id.toString(),
         'title': title,
+        'description': description,
+        'profileName': userName,
         'hour': time.hour,
         'minute': time.minute,
         'year': date.year,

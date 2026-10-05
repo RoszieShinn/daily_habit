@@ -16,6 +16,8 @@ class MainActivity : FlutterActivity() {
                     "schedule" -> {
                         val id = call.argument<String>("id")?.toLongOrNull() ?: run { result.error("invalid", "Missing alarm id", null); return@setMethodCallHandler }
                         val title = call.argument<String>("title") ?: "Habit reminder"
+                        val profileName = call.argument<String>("profileName") ?: ""
+                        val description = call.argument<String>("description") ?: ""
                         val hour = call.argument<Int>("hour") ?: 9
                         val minute = call.argument<Int>("minute") ?: 0
                         val year = call.argument<Int>("year") ?: 2026
@@ -26,7 +28,7 @@ class MainActivity : FlutterActivity() {
                             requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 4101)
                         }
                         try {
-                            HabitAlarms.schedule(this, id, title, year, month, day, hour, minute, repeat)
+                            HabitAlarms.schedule(this, id, title, year, month, day, hour, minute, repeat, profileName, description)
                             result.success(null)
                         } catch (error: SecurityException) {
                             result.error("exact_alarm_permission", "Allow exact alarms for Day by Day in Android settings, then save the reminder again.", null)

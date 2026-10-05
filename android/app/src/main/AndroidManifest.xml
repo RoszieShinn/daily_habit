@@ -3,6 +3,7 @@
     <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+    <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
     <application
         android:label="daily_habit"
         android:name="${applicationName}"
@@ -31,6 +32,13 @@
         </activity>
         <receiver android:name=".HabitAlarmReceiver" android:exported="false" />
         <receiver android:name=".AlarmActionReceiver" android:exported="false" />
+        <activity
+            android:name=".AlarmPromptActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:showWhenLocked="true"
+            android:turnScreenOn="true"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
         <receiver android:name=".AlarmBootReceiver" android:enabled="true" android:exported="false">
             <intent-filter>
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
