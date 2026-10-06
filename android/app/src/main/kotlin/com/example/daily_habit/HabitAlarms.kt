@@ -29,9 +29,25 @@ import java.util.Calendar
 private const val ALARM_CHANNEL = "habit_alarms"
 private const val ALARM_NOTIFICATION_ID = 8701
 private const val PREFS = "scheduled_habit_alarms"
+private const val TASK_PREFS = "FlutterSharedPreferences"
+private const val TASKS_KEY = "flutter.daily_habit_items_v1"
 private const val ACTION_STOP_ALARM = "com.example.daily_habit.STOP_ALARM"
 
 object HabitAlarms {
+    fun markTaskDone(context: Context, id: Long) {
+        val preferences = context.getSharedPreferences(TASK_PREFS, Context.MODE_PRIVATE)
+        val saved = preferences.getString(TASKS_KEY, null) ?: return
+        val tasks = runCatching { org.json.JSONArray(saved) }.getOrNull() ?: return
+        for (index in 0 until tasks.length()) {
+            val task = tasks.optJSONObject(index) ?: continue
+            if (task.optLong("id", -1L) == id) {
+                task.put("done", true)
+                preferences.edit().putString(TASKS_KEY, tasks.toString()).apply()
+                return
+            }
+        }
+    }
+
     fun schedule(context: Context, id: Long, title: String, year: Int, month: Int, day: Int, hour: Int, minute: Int, repeatDaily: Boolean, profileName: String = "", description: String = "") {
         ensureChannel(context)
         val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
@@ -129,6 +145,7 @@ class HabitAlarmReceiver : BroadcastReceiver() {
             context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().remove(id.toString()).apply()
         }
         val service = Intent(context, AlarmSoundService::class.java)
+            .putExtra("id", id)
             .putExtra("title", data.optString("title", "Habit reminder"))
             .putExtra("profileName", data.optString("profileName", ""))
             .putExtra("description", data.optString("description", ""))
@@ -198,7 +215,12 @@ class AlarmPromptActivity : Activity() {
             text = "Got it"
             setTextColor(Color.rgb(130, 210, 188))
             setBackgroundColor(Color.TRANSPARENT)
-            setOnClickListener { finish() }
+            setOnClickListener {
+                val id = intent.getLongExtra("id", -1L)
+                if (id >= 0L) HabitAlarms.markTaskDone(this@AlarmPromptActivity, id)
+                stopService(Intent(this@AlarmPromptActivity, AlarmSoundService::class.java))
+                finish()
+            }
         }
         actions.addView(stop)
         actions.addView(gotIt)
@@ -221,8 +243,10 @@ class AlarmSoundService : Service() {
         val title = intent?.getStringExtra("title") ?: "Habit reminder"
         val profileName = intent?.getStringExtra("profileName").orEmpty()
         val description = intent?.getStringExtra("description").orEmpty()
+        val id = intent?.getLongExtra("id", -1L) ?: -1L
         val stopIntent = PendingIntent.getBroadcast(this, 9102, Intent(this, AlarmActionReceiver::class.java).setAction(ACTION_STOP_ALARM), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
         val promptIntent = Intent(this, AlarmPromptActivity::class.java)
+            .putExtra("id", id)
             .putExtra("title", title)
             .putExtra("profileName", profileName)
             .putExtra("description", description)

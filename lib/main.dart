@@ -1,5 +1,8 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 void main() => runApp(const DailyHabitApp());
 
@@ -15,7 +18,8 @@ class HabitItem {
     this.reminderDate,
     this.isHabit = false,
     this.done = false,
-  });
+    int? id,
+  }) : id = id ?? DateTime.now().microsecondsSinceEpoch;
   String title;
   String description;
   Color color;
@@ -24,7 +28,44 @@ class HabitItem {
   DateTime? reminderDate;
   bool isHabit;
   bool done;
-  final int id = DateTime.now().microsecondsSinceEpoch;
+  final int id;
+
+  Map<String, Object?> toJson() => {
+    'id': id,
+    'title': title,
+    'description': description,
+    'color': color.toARGB32(),
+    'timeHour': time?.hour,
+    'timeMinute': time?.minute,
+    'icon': icon?.codePoint,
+    'reminderDate': reminderDate?.toIso8601String(),
+    'isHabit': isHabit,
+    'done': done,
+  };
+
+  factory HabitItem.fromJson(Map<String, dynamic> json) => HabitItem(
+    id: json['id'] as int?,
+    title: json['title'] as String? ?? '',
+    description: json['description'] as String? ?? '',
+    color: Color(json['color'] as int? ?? 0xFFE9B892),
+    time: json['timeHour'] == null || json['timeMinute'] == null
+        ? null
+        : TimeOfDay(
+            hour: json['timeHour'] as int,
+            minute: json['timeMinute'] as int,
+          ),
+    icon: json['icon'] == null
+        ? null
+        : IconData(
+            json['icon'] as int,
+            fontFamily: 'MaterialIcons',
+          ),
+    reminderDate: json['reminderDate'] == null
+        ? null
+        : DateTime.tryParse(json['reminderDate'] as String),
+    isHabit: json['isHabit'] as bool? ?? false,
+    done: json['done'] as bool? ?? false,
+  );
 }
 
 const _ink = Color(0xFF202B2A);
@@ -80,7 +121,10 @@ class TrackerHome extends StatefulWidget {
   State<TrackerHome> createState() => _TrackerHomeState();
 }
 
-class _TrackerHomeState extends State<TrackerHome> {
+class _TrackerHomeState extends State<TrackerHome> with WidgetsBindingObserver {
+  static const _itemsStorageKey = 'daily_habit_items_v1';
+  bool _isLoadingItems = true;
+  Future<void> _saveQueue = Future<void>.value();
   int tab = 0;
   String userName = 'Rosie';
   int avatarIndex = 0;
@@ -142,11 +186,59 @@ class _TrackerHomeState extends State<TrackerHome> {
       isHabit: true,
     ),
   ];
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    _loadItems();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) _loadItems();
+  }
+
+  Future<void> _loadItems() async {
+    try {
+      final preferences = await SharedPreferences.getInstance();
+      await preferences.reload();
+      final savedItems = preferences.getString(_itemsStorageKey);
+      if (savedItems != null) {
+        final decoded = jsonDecode(savedItems) as List<dynamic>;
+        items
+          ..clear()
+          ..addAll(
+            decoded.map(
+              (value) => HabitItem.fromJson(value as Map<String, dynamic>),
+            ),
+          );
+      } else {
+        await _saveItems();
+      }
+    } catch (error) {
+      debugPrint('Could not load saved tasks: $error');
+    } finally {
+      if (mounted) setState(() => _isLoadingItems = false);
+    }
+  }
+
+  Future<void> _saveItems() {
+    _saveQueue = _saveQueue.then((_) async {
+      final preferences = await SharedPreferences.getInstance();
+      await preferences.setString(
+        _itemsStorageKey,
+        jsonEncode(items.map((item) => item.toJson()).toList()),
+      );
+    });
+    return _saveQueue;
+  }
   int get done => items.where((e) => e.done).length;
   int get percent => items.isEmpty ? 0 : (done / items.length * 100).round();
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _homeScrollController.dispose();
     super.dispose();
   }
@@ -204,10 +296,10 @@ class _TrackerHomeState extends State<TrackerHome> {
           const SizedBox(width: 8),
         ],
       ),
-      body: SafeArea(
-        child: IndexedStack(index: tab, children: pages),
-      ),
-      floatingActionButton: tab != 1
+      body: _isLoadingItems
+          ? const Center(child: CircularProgressIndicator())
+          : SafeArea(child: IndexedStack(index: tab, children: pages)),
+      floatingActionButton: _isLoadingItems || tab != 1
           ? null
           : FloatingActionButton.extended(
               onPressed: () => _editItem(),
@@ -416,15 +508,32 @@ class _TrackerHomeState extends State<TrackerHome> {
                         ? null
                         : () => setState(
                             () =>
-                                calendarMonth = DateTime(2026, month.month - 1),
+                                calendarMonth = DateTime(month.year, month.month - 1),
                           ),
                     icon: const Icon(Icons.chevron_left_rounded),
                   ),
-                  Text(
-                    '${_month(month.month)} 2026',
-                    style: const TextStyle(
-                      fontWeight: FontWeight.w800,
-                      fontSize: 16,
+                  InkWell(
+                    borderRadius: BorderRadius.circular(8),
+                    onTap: _chooseCalendarMonth,
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 4,
+                        vertical: 8,
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(
+                            '${_month(month.month)} ${month.year}',
+                            style: const TextStyle(
+                              fontWeight: FontWeight.w800,
+                              fontSize: 16,
+                            ),
+                          ),
+                          const SizedBox(width: 3),
+                          const Icon(Icons.arrow_drop_down_rounded, size: 21),
+                        ],
+                      ),
                     ),
                   ),
                   IconButton(
@@ -433,7 +542,7 @@ class _TrackerHomeState extends State<TrackerHome> {
                         ? null
                         : () => setState(
                             () =>
-                                calendarMonth = DateTime(2026, month.month + 1),
+                                calendarMonth = DateTime(month.year, month.month + 1),
                           ),
                     icon: const Icon(Icons.chevron_right_rounded),
                   ),
@@ -489,7 +598,7 @@ class _TrackerHomeState extends State<TrackerHome> {
                       child: _calendarDay(
                         week * 7 + weekday - firstDay.weekday + 2,
                         numberOfDays,
-                        today.year == 2026 && today.month == month.month
+                        today.year == month.year && today.month == month.month
                             ? today.day
                             : -1,
                         month.month,
@@ -503,18 +612,117 @@ class _TrackerHomeState extends State<TrackerHome> {
     );
   }
 
+  Future<void> _chooseCalendarMonth() async {
+    final today = DateTime.now();
+    final chosenMonth = await showModalBottomSheet<int>(
+      context: context,
+      backgroundColor: Theme.of(context).colorScheme.surface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (sheetContext) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(20, 20, 20, 24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Choose a month',
+                style: Theme.of(sheetContext).textTheme.titleLarge?.copyWith(
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+              const SizedBox(height: 16),
+              GridView.builder(
+                shrinkWrap: true,
+                physics: const NeverScrollableScrollPhysics(),
+                itemCount: 12,
+                gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                  crossAxisCount: 3,
+                  mainAxisSpacing: 9,
+                  crossAxisSpacing: 9,
+                  childAspectRatio: 2.1,
+                ),
+                itemBuilder: (context, index) {
+                  final monthNumber = index + 1;
+                  final isSelected = monthNumber == calendarMonth.month;
+                  final isCurrentMonth =
+                      monthNumber == today.month &&
+                      calendarMonth.year == today.year;
+                  final colors = Theme.of(context).colorScheme;
+                  return Material(
+                    color: isSelected ? _green : colors.surfaceContainerHighest,
+                    borderRadius: BorderRadius.circular(13),
+                    child: InkWell(
+                      borderRadius: BorderRadius.circular(13),
+                      onTap: () => Navigator.pop(sheetContext, monthNumber),
+                      child: Stack(
+                        alignment: Alignment.center,
+                        children: [
+                          Text(
+                            _month(monthNumber),
+                            style: TextStyle(
+                              color: isSelected ? Colors.white : null,
+                              fontWeight: isSelected || isCurrentMonth
+                                  ? FontWeight.w800
+                                  : FontWeight.w600,
+                              fontSize: 13,
+                            ),
+                          ),
+                          if (isCurrentMonth)
+                            Positioned(
+                              bottom: 5,
+                              child: Container(
+                                width: 4,
+                                height: 4,
+                                decoration: BoxDecoration(
+                                  color: isSelected
+                                      ? Colors.white
+                                      : _green,
+                                  shape: BoxShape.circle,
+                                ),
+                              ),
+                            ),
+                        ],
+                      ),
+                    ),
+                  );
+                },
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+
+    if (chosenMonth == null || !mounted) return;
+    final targetYear = calendarMonth.year;
+    final targetDay = chosenMonth == today.month && targetYear == today.year
+        ? today.day
+        : 1;
+    setState(() {
+      calendarMonth = DateTime(targetYear, chosenMonth);
+      selectedDate = DateTime(targetYear, chosenMonth, targetDay);
+    });
+  }
+
   Widget _calendarDay(int day, int numberOfDays, int today, int month) {
     if (day < 1 || day > numberOfDays) return const SizedBox(height: 34);
     final isToday = day == today;
-    final hasTasks = _itemsForDate(DateTime(2026, month, day)).isNotEmpty;
+    final hasTasks = _itemsForDate(
+      DateTime(calendarMonth.year, month, day),
+    ).isNotEmpty;
     final isSelected =
-        selectedDate.year == 2026 &&
+        selectedDate.year == calendarMonth.year &&
         selectedDate.month == month &&
         selectedDate.day == day;
     return Center(
       child: InkWell(
         customBorder: const CircleBorder(),
-        onTap: () => setState(() => selectedDate = DateTime(2026, month, day)),
+        onTap: () => setState(
+          () => selectedDate = DateTime(calendarMonth.year, month, day),
+        ),
         child: Container(
           width: 31,
           height: 31,
@@ -707,9 +915,10 @@ class _TrackerHomeState extends State<TrackerHome> {
     child: Row(
       children: [
         InkWell(
-          onTap: () => setState(() {
-            item.done = !item.done;
-          }),
+          onTap: () {
+            setState(() => item.done = !item.done);
+            _saveItems();
+          },
           borderRadius: BorderRadius.circular(20),
           child: Container(
             width: 27,
@@ -1637,6 +1846,7 @@ class _TrackerHomeState extends State<TrackerHome> {
       ),
     );
     if (result == true && item != null) {
+      await _saveItems();
       await _cancelReminder(item.id);
       if (time != null) {
         await _scheduleReminder(
@@ -1655,6 +1865,7 @@ class _TrackerHomeState extends State<TrackerHome> {
       }
     } else if (result == true && item == null) {
       final added = items.last;
+      await _saveItems();
       if (time != null) {
         await _scheduleReminder(
           added,
@@ -1746,6 +1957,7 @@ class _TrackerHomeState extends State<TrackerHome> {
     if (ok == true) {
       await _cancelReminder(item.id);
       setState(() => items.remove(item));
+      await _saveItems();
       if (mounted) {
         ScaffoldMessenger.of(
           context,
